@@ -2,7 +2,7 @@ const Booking = require('../models/Booking');
 const nodemailer = require('nodemailer');
 const { decrypt } = require('../utils/crypto');
 const User = require('../models/User');
-const { v4: uuidv4 } = require('uuid'); // Need to install uuid, or just use Date.now() + Random
+// Native crypto can be used if UUID is needed: const { randomUUID } = require('crypto');
 
 // Helper: Send Email (Reused)
 const sendBookingEmail = async (user, customerEmail, customerName, bookings, totalAmount) => {
