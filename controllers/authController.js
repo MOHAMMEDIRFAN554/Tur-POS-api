@@ -57,47 +57,54 @@ const loginUser = async (req, res) => {
 };
 
 const updateProfile = async (req, res) => {
-    const user = await User.findById(req.user._id);
+    try {
+        const user = await User.findById(req.user._id);
 
-    if (user) {
-        user.name = req.body.name || user.name;
-        user.email = req.body.email || user.email;
-        user.turfName = req.body.turfName || user.turfName;
-        user.address = req.body.address || user.address;
-        user.phone = req.body.phone || user.phone;
-        if (req.body.password) {
-            user.password = req.body.password;
-        }
+        if (user) {
+            user.name = req.body.name || user.name;
+            user.email = req.body.email || user.email;
+            user.turfName = req.body.turfName || user.turfName;
+            user.address = req.body.address || user.address;
+            user.phone = req.body.phone || user.phone;
 
-        if (req.body.emailConfig) {
-            const { user: emailUser, pass: emailPass } = req.body.emailConfig;
-            // Initialize if undefined
-            if (!user.emailConfig) user.emailConfig = {};
-
-            if (emailUser) user.emailConfig.user = emailUser;
-
-            if (emailPass) {
-                const encryptedPass = encrypt(emailPass);
-                user.emailConfig.pass = encryptedPass;
+            if (req.body.password) {
+                user.password = req.body.password;
             }
-        }
 
-        const updatedUser = await user.save();
-        res.json({
-            _id: updatedUser._id,
-            name: updatedUser.name,
-            email: updatedUser.email,
-            turfName: updatedUser.turfName,
-            address: updatedUser.address,
-            phone: updatedUser.phone,
-            token: generateToken(updatedUser._id),
-            emailConfig: {
-                user: updatedUser.emailConfig?.user
-                // Pass excluded
+            if (req.body.emailConfig) {
+                const { user: emailUser, pass: emailPass } = req.body.emailConfig;
+                if (!user.emailConfig) user.emailConfig = {};
+
+                if (emailUser) user.emailConfig.user = emailUser;
+
+                // Only encrypt if emailPass is a string (new password)
+                if (emailPass && typeof emailPass === 'string') {
+                    const encryptedPass = encrypt(emailPass);
+                    if (encryptedPass) {
+                        user.emailConfig.pass = encryptedPass;
+                    }
+                }
             }
-        });
-    } else {
-        res.status(404).json({ message: 'User not found' });
+
+            const updatedUser = await user.save();
+            res.json({
+                _id: updatedUser._id,
+                name: updatedUser.name,
+                email: updatedUser.email,
+                turfName: updatedUser.turfName,
+                address: updatedUser.address,
+                phone: updatedUser.phone,
+                token: generateToken(updatedUser._id),
+                emailConfig: {
+                    user: updatedUser.emailConfig?.user
+                }
+            });
+        } else {
+            res.status(404).json({ message: 'User not found' });
+        }
+    } catch (error) {
+        console.error("Update Profile Error:", error);
+        res.status(500).json({ message: 'Internal Server Error', error: error.message });
     }
 };
 
