@@ -6,7 +6,7 @@ const expenseSchema = mongoose.Schema({
     amount: { type: Number, required: true },
     category: { type: String, required: true },
     date: { type: String, required: true }, // YYYY-MM-DD
-    paymentMode: { type: String, enum: ['Cash', 'UPI'], default: 'Cash' },
+    paymentMode: { type: String, default: 'Cash' },
     note: { type: String },
 }, { timestamps: true });
 

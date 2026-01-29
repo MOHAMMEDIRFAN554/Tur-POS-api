@@ -12,7 +12,12 @@ const app = express();
 
 // Middleware
 app.use(express.json());
-app.use(cors());
+
+const allowedOrigins = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : '*';
+app.use(cors({
+    origin: allowedOrigins,
+    credentials: true
+}));
 app.use(helmet());
 app.use(morgan('dev'));
 

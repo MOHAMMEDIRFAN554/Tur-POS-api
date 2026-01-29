@@ -49,171 +49,197 @@ Thank you!
 // @desc    Create Batch Booking
 // @route   POST /api/bookings/batch
 const createBookingBatch = async (req, res) => {
-    const { items, customerName, customerMobile, customerEmail, totalAmount, paidAmount, paymentMode, discount } = req.body;
+    try {
+        const { items, customerName, customerMobile, customerEmail, totalAmount, paidAmount, paymentMode, discount } = req.body;
 
-    // 1. Conflict Check for ALL items
-    for (const item of items) {
-        const existing = await Booking.find({
-            space: item.space,
-            date: item.date,
-            status: 'Booked',
-            slots: { $in: item.slots }
-        });
-        if (existing.length > 0) {
-            return res.status(400).json({ message: `Conflict detected for space ${item.spaceName} on ${item.date}` });
-        }
-    }
-
-    const groupId = Date.now().toString() + Math.floor(Math.random() * 1000);
-    const createdBookings = [];
-
-    // 2. Create Bookings
-    // Distribute discount/paidAmount proportionally or just store on the first one?
-    // Better: Store main details on all, but financials are tricky.
-    // For simplicity: Store accurate 'itemAmount' on each, but discount/payment info is global.
-    // However, the schema expects total/paid on EACH booking.
-    // Strategy: We will split the discount and payment proportionally to the item amount.
-
-    const globalTotal = items.reduce((sum, item) => sum + item.amount, 0); // Should match totalAmount (pre-discount)
-
-    // We'll proceed with saving each Booking separately
-    for (const item of items) {
-        // Simple proportion:
-        const ratio = item.amount / globalTotal;
-        const itemDiscount = Math.round(discount * ratio);
-        const itemPaid = Math.round(paidAmount * ratio);
-
-        // Split Mode Logic Check
-        let finalPaymentMode = paymentMode;
-        if (paymentMode === 'Split' && req.body.paymentDetails) {
-            const details = Object.entries(req.body.paymentDetails)
-                .filter(([_, val]) => val > 0)
-                .map(([key, val]) => `${key}: ${val}`)
-                .join(', ');
-            finalPaymentMode = `Split (${details})`;
+        if (!items || !Array.isArray(items) || items.length === 0) {
+            return res.status(400).json({ message: 'No items provided for booking' });
         }
 
-        const booking = new Booking({
-            user: req.user._id,
-            space: item.space,
-            date: item.date,
-            slots: item.slots,
-            customerName,
-            customerMobile,
-            customerEmail,
-            totalAmount: item.amount,
-            discount: itemDiscount,
-            paidAmount: itemPaid,
-            paymentMode: finalPaymentMode,
-            groupId
-        });
-        const saved = await booking.save();
-        // Populate the saved booking to get space name for frontend immediate update
-        const fullSaved = await Booking.findById(saved._id).populate('space', 'name pricePerHour');
-        createdBookings.push(fullSaved);
+        // 1. Conflict Check for ALL items
+        for (const item of items) {
+            const existing = await Booking.find({
+                space: item.space,
+                date: item.date,
+                status: 'Booked',
+                slots: { $in: item.slots }
+            });
+            if (existing.length > 0) {
+                return res.status(400).json({ message: `Conflict detected for space ${item.spaceName || 'Turf'} on ${item.date}` });
+            }
+        }
+
+        const groupId = Date.now().toString() + Math.floor(Math.random() * 1000);
+        const createdBookings = [];
+
+        const preDiscountTotal = items.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+
+        // 2. Create Bookings
+        for (const item of items) {
+            // Safe Proportion Logic
+            const ratio = preDiscountTotal > 0 ? (item.amount / preDiscountTotal) : (1 / items.length);
+            const itemDiscount = Math.round((Number(discount) || 0) * ratio);
+            const itemPaid = Math.round((Number(paidAmount) || 0) * ratio);
+
+            // Split Mode Logic Check
+            let finalPaymentMode = paymentMode;
+            if (paymentMode === 'Split' && req.body.paymentDetails) {
+                const details = Object.entries(req.body.paymentDetails)
+                    .filter(([_, val]) => val > 0)
+                    .map(([key, val]) => `${key}: ${val}`)
+                    .join(', ');
+                finalPaymentMode = `Split (${details})`;
+            }
+
+            const booking = new Booking({
+                user: req.user._id,
+                space: item.space,
+                date: item.date,
+                slots: item.slots,
+                customerName,
+                customerMobile,
+                customerEmail,
+                totalAmount: item.amount,
+                discount: itemDiscount,
+                paidAmount: itemPaid,
+                paymentMode: finalPaymentMode,
+                groupId
+            });
+            const saved = await booking.save();
+            const fullSaved = await Booking.findById(saved._id).populate('space', 'name pricePerHour');
+            createdBookings.push(fullSaved);
+        }
+
+        // Email in background
+        if (customerEmail) {
+            sendBookingEmail(req.user, customerEmail, customerName, items, totalAmount).catch(err => console.error("Email BG Error:", err));
+        }
+
+        res.status(201).json(createdBookings);
+    } catch (error) {
+        console.error("Batch Booking Error:", error);
+        res.status(500).json({ message: 'Internal Server Error', error: error.message });
     }
-
-    sendBookingEmail(req.user, customerEmail, customerName, items, totalAmount);
-
-    res.status(201).json(createdBookings);
 };
 
 // @desc    Create a new booking (Single - Legacy support or simple use)
 const createBooking = async (req, res) => {
-    // ... (Keep existing if needed, or redirect to batch logic)
-    // For now, let's just wrap it in batch logic or keep separate?
-    // Let's keep separate for safety, but optimized.
-    const { space, date, slots, customerName, customerMobile, customerEmail, totalAmount, paidAmount, paymentMode, discount } = req.body;
+    try {
+        const { space, date, slots, customerName, customerMobile, customerEmail, totalAmount, paidAmount, paymentMode, discount } = req.body;
 
-    const existingBookings = await Booking.find({
-        space,
-        date,
-        status: 'Booked',
-        slots: { $in: slots }
-    });
+        const existingBookings = await Booking.find({
+            space,
+            date,
+            status: 'Booked',
+            slots: { $in: slots }
+        });
 
-    if (existingBookings.length > 0) {
-        return res.status(400).json({ message: 'One or more slots are already booked.' });
+        if (existingBookings.length > 0) {
+            return res.status(400).json({ message: 'One or more slots are already booked.' });
+        }
+
+        const booking = new Booking({
+            user: req.user._id,
+            space,
+            date,
+            slots,
+            customerName,
+            customerMobile,
+            customerEmail,
+            totalAmount,
+            paidAmount,
+            paymentMode,
+            discount,
+            groupId: Date.now().toString()
+        });
+
+        const createdBooking = await booking.save();
+        const fullSaved = await Booking.findById(createdBooking._id).populate('space', 'name pricePerHour');
+
+        if (customerEmail) {
+            sendBookingEmail(req.user, customerEmail, customerName, [{
+                spaceName: fullSaved.space.name,
+                date: fullSaved.date,
+                slots: fullSaved.slots
+            }], totalAmount).catch(err => console.error("Email Single BG Error:", err));
+        }
+
+        res.status(201).json(fullSaved);
+    } catch (error) {
+        console.error("Create Booking Error:", error);
+        res.status(500).json({ message: 'Internal Server Error', error: error.message });
     }
-
-    const booking = new Booking({
-        user: req.user._id,
-        space,
-        date,
-        slots,
-        customerName,
-        customerMobile,
-        customerEmail,
-        totalAmount,
-        paidAmount,
-        paymentMode,
-        discount,
-        groupId: Date.now().toString()
-    });
-
-    const createdBooking = await booking.save();
-    const fullSaved = await Booking.findById(createdBooking._id).populate('space', 'name pricePerHour');
-
-    sendBookingEmail(req.user, customerEmail, customerName, [{
-        spaceName: fullSaved.space.name,
-        date: fullSaved.date,
-        slots: fullSaved.slots
-    }], totalAmount);
-
-    res.status(201).json(fullSaved);
 };
 
 // @desc    Get bookings
 const getBookings = async (req, res) => {
-    const { date } = req.query;
-    let query = { user: req.user._id };
-    if (date) {
-        query.date = date;
-    }
+    try {
+        const { date } = req.query;
+        let query = { user: req.user._id };
+        if (date) {
+            query.date = date;
+        }
 
-    const bookings = await Booking.find(query).populate('space', 'name pricePerHour');
-    res.json(bookings);
+        const bookings = await Booking.find(query).populate('space', 'name pricePerHour');
+        res.json(bookings);
+    } catch (error) {
+        console.error("Get Bookings Error:", error);
+        res.status(500).json({ message: 'Internal Server Error' });
+    }
 };
 
 // @desc    Get single booking
 const getBookingById = async (req, res) => {
-    const booking = await Booking.findById(req.params.id).populate('space');
-    if (booking && booking.user.toString() === req.user._id.toString()) {
-        res.json(booking);
-    } else {
-        res.status(404).json({ message: 'Booking not found' });
+    try {
+        const booking = await Booking.findById(req.params.id).populate('space');
+        if (booking && booking.user.toString() === req.user._id.toString()) {
+            res.json(booking);
+        } else {
+            res.status(404).json({ message: 'Booking not found' });
+        }
+    } catch (error) {
+        console.error("Get Booking ID Error:", error);
+        res.status(500).json({ message: 'Internal Server Error' });
     }
 };
 
 // @desc    Cancel booking
 const cancelBooking = async (req, res) => {
-    const booking = await Booking.findById(req.params.id);
-    if (booking && booking.user.toString() === req.user._id.toString()) {
-        booking.status = 'Cancelled';
-        booking.refundAmount = req.body.refundAmount || 0;
-        const updatedBooking = await booking.save();
-        res.json(updatedBooking);
-    } else {
-        res.status(404).json({ message: 'Booking not found' });
+    try {
+        const booking = await Booking.findById(req.params.id);
+        if (booking && booking.user.toString() === req.user._id.toString()) {
+            booking.status = 'Cancelled';
+            booking.refundAmount = req.body.refundAmount || 0;
+            const updatedBooking = await booking.save();
+            res.json(updatedBooking);
+        } else {
+            res.status(404).json({ message: 'Booking not found' });
+        }
+    } catch (error) {
+        console.error("Cancel Booking Error:", error);
+        res.status(500).json({ message: 'Internal Server Error' });
     }
 };
 
 // @desc Update Booking Payment (Settle Balance)
 const updateBookingPayment = async (req, res) => {
-    const { amount, paymentMode } = req.body;
-    const booking = await Booking.findById(req.params.id);
+    try {
+        const { amount, paymentMode } = req.body.paymentData || req.body;
+        const booking = await Booking.findById(req.params.id);
 
-    if (booking && booking.user.toString() === req.user._id.toString()) {
-        booking.paidAmount = (booking.paidAmount || 0) + Number(amount);
-        // We might want to track payment history, but for now simple sum is enough for MVP.
-        // If we want to store multiple payment modes, we might need a transactions array in the future.
-        // For now, let's just update the last used mode or keep it simple.
-        if (paymentMode) booking.paymentMode = paymentMode;
+        if (booking && booking.user.toString() === req.user._id.toString()) {
+            booking.paidAmount = (booking.paidAmount || 0) + Number(amount);
+            if (paymentMode) booking.paymentMode = paymentMode;
 
-        const updatedBooking = await booking.save();
-        res.json(updatedBooking);
-    } else {
-        res.status(404).json({ message: 'Booking not found' });
+            const updatedBooking = await booking.save();
+            const fullUpdated = await Booking.findById(updatedBooking._id).populate('space', 'name pricePerHour');
+            res.json(fullUpdated);
+        } else {
+            res.status(404).json({ message: 'Booking not found' });
+        }
+    } catch (error) {
+        console.error("Update Payment Error:", error);
+        res.status(500).json({ message: 'Internal Server Error' });
     }
 };
 

@@ -10,7 +10,7 @@ const bookingSchema = mongoose.Schema({
     customerEmail: { type: String },
     totalAmount: { type: Number, required: true },
     paidAmount: { type: Number, default: 0 },
-    paymentMode: { type: String, enum: ['Cash', 'UPI', 'Credit'], default: 'Cash' },
+    paymentMode: { type: String, default: 'Cash' }, // Allows Cash, UPI, Card, Split (with details)
     status: { type: String, enum: ['Booked', 'Cancelled'], default: 'Booked' },
     discount: { type: Number, default: 0 },
     refundAmount: { type: Number, default: 0 },
